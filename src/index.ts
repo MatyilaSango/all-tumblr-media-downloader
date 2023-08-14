@@ -115,7 +115,7 @@ const getMediaLinks = async (
 };
 
 /**
- * Get file from a directory
+ * Get all files from a directory
  *
  * @param dir Directory name
  * @returns
