@@ -1,13 +1,16 @@
 import axios from "axios";
 import { parseString } from "xml2js";
 import cheerio from "cheerio";
-import { readdirSync, statSync } from "fs";
 import { DownloaderHelper } from "node-downloader-helper";
 import * as fs from "fs";
 import * as dotnet from "dotenv";
 
 dotnet.config();
 
+interface IData {
+  video: string[],
+  photo: string[] 
+}
 interface IConfig {
   site: string;
   type: string;
@@ -26,7 +29,7 @@ let config: IConfig = {
 
 let TOTAL_POSTS: number = 0;
 
-let filesInDirectory: string[] = [];
+let filesInDirectory: IData = {video: [], photo: []};
 
 const getData = async (
   site: string,
@@ -120,16 +123,24 @@ const getMediaLinks = async (
  * @param dir Directory name
  * @returns
  */
-const _getAllFilesFromFolder = function (dir: string) {
-  let results: string[] = [];
-  readdirSync(dir).forEach(function (file) {
-    file = dir + "/" + file;
-    let stat = statSync(file);
-    if (stat && stat.isDirectory()) {
-      results = results.concat(_getAllFilesFromFolder(file));
-    } else results.push(file);
-  });
-  return results;
+const _getAllFilesFromFolder = function (dir: string, site: string) {
+  try {
+    filesInDirectory = require(`${dir}/${site}.json`);
+  } catch (e) {
+    console.log("New user detected!");
+  }
+
+  return filesInDirectory;
+};
+
+const saveToFile = (fileName: string, data: IData, dir: string) => {
+  fs.writeFile(
+    `${dir}/${fileName}.json`,
+    JSON.stringify(data),
+    (error) => {
+      if (error) console.warn("Error: ", error);
+    }
+  );
 };
 
 /**
@@ -138,10 +149,11 @@ const _getAllFilesFromFolder = function (dir: string) {
  * @param file Media link
  * @param directory Directory to download the media into
  */
-const fileDownloader = (file: string, directory: string) => {
+const fileDownloader = (file: string, directory: string): Promise<boolean> => {
   let dl = new DownloaderHelper(file, directory);
   dl.start();
   console.log("Success: ", file);
+  return Promise.resolve(true)
 };
 
 /**
@@ -171,11 +183,19 @@ const directoryParser = (dir: string, name: string) => {
  * @param file file name
  * @returns boolean
  */
-const isFileAlreadyExist = (file: string): boolean => {
+const isFileAlreadyExist = (file: string, type: string): boolean => {
   let isExist: boolean = false;
-  filesInDirectory.map((f) => {
-    if (file.includes(f)) isExist = true;
-  });
+  if(type === "video"){
+    filesInDirectory.video.map((f) => {
+      if (file.includes(f)) isExist = true;
+    });
+  }
+  else if(type === "photo"){
+    filesInDirectory.photo.map((f) => {
+      if (file.includes(f)) isExist = true;
+    });
+  }
+  
   return isExist;
 };
 
@@ -196,27 +216,29 @@ const tumblrDownloader = (
   directory: string
 ) => {
   directory = directoryParser(directory, site);
-  filesInDirectory = _getAllFilesFromFolder(directory).map((_file) =>
-    _file.replace(directory + "/", "")
-  );
+  filesInDirectory = _getAllFilesFromFolder(directory, site)
 
   getMediaLinks(site, type, size, start).then((res) => {
-    if (res)
-      res.map((_medialink) => {
-        if (!isFileAlreadyExist(_medialink)) {
-          axios
+    if (res){
+      res.map(async(_medialink) => {
+        if (!isFileAlreadyExist(_medialink, type)) {
+          await axios
             .get(_medialink)
-            .then((_res) => {
-              fileDownloader(_medialink, directory);
+            .then(async(_res) => {
+              await fileDownloader(_medialink, directory);
+              console.log("done")
             })
             .catch((_err) => {
               console.log("403: ", _medialink);
             });
         }
       });
+      type === "video" ? filesInDirectory.video = res : filesInDirectory.photo = res
+      saveToFile(site, filesInDirectory, directory)
+    }
   });
 };
 
-//tumblrDownloader(config);
+//tumblrDownloader(config.site, config.type, config.size, config.start, config.directory);
 
 module.exports = { tumblrDownloader }
